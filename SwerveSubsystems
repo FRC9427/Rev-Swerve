@@ -1,0 +1,414 @@
+package frc.robot.subsystems;
+
+import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.math.filter.SlewRateLimiter;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
+import edu.wpi.first.math.kinematics.SwerveDriveOdometry;
+import edu.wpi.first.math.kinematics.SwerveModulePosition;
+import edu.wpi.first.math.kinematics.SwerveModuleState;
+import edu.wpi.first.util.WPIUtilJNI;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.SPI;
+import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+
+import java.util.Arrays;
+
+import com.kauailabs.navx.frc.AHRS;
+
+import frc.robot.RobotContainer;
+import frc.robot.Constants;
+import frc.robot.Constants.DriveConstants;
+import frc.robot.Constants.OIConstants;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.util.HolonomicPathFollowerConfig;
+import com.pathplanner.lib.util.PIDConstants;
+import com.pathplanner.lib.util.ReplanningConfig;
+
+public class SwerveSubsystem extends SubsystemBase {
+    // 創造SwerveModule
+    private final SwerveModule m_frontLeft = new SwerveModule(
+            DriveConstants.kFrontLeftDrivingCanId,
+            DriveConstants.kFrontLeftTurningCanId,
+            DriveConstants.kFrontLeftChassisAngularOffset);
+
+    private final SwerveModule m_frontRight = new SwerveModule(
+            DriveConstants.kFrontRightDrivingCanId,
+            DriveConstants.kFrontRightTurningCanId,
+            DriveConstants.kFrontRightChassisAngularOffset);
+
+    private final SwerveModule m_rearLeft = new SwerveModule(
+            DriveConstants.kRearLeftDrivingCanId,
+            DriveConstants.kRearLeftTurningCanId,
+            DriveConstants.kBackLeftChassisAngularOffset);
+
+    private final SwerveModule m_rearRight = new SwerveModule(
+            DriveConstants.kRearRightDrivingCanId,
+            DriveConstants.kRearRightTurningCanId,
+            DriveConstants.kBackRightChassisAngularOffset);
+
+    private ChassisSpeeds m_robotRelativeChassisSpeeds = new ChassisSpeeds();
+
+    private final SwerveModule[] swerveModules = new SwerveModule[] { m_frontLeft, m_frontRight, m_rearLeft,
+            m_rearRight };
+    // 陀螺儀
+    private final AHRS nxGyro = new AHRS(SPI.Port.kMXP);
+    private final PIDController m_gyroPidController = new PIDController(0.01, 0.0001, 0);
+    // 通過斜率濾波器控制橫向加速度
+    // 斜率濾波器它通常使用在控制機器人或運動系統中，以確保機器人的運動更加平穩，避免因急速變化而引起的不穩定或震盪
+    private double m_currentRotation = 0.0;// 當前的旋轉值
+    private double m_currentTranslationDir = 0.0;// 當前的平移方向
+    private double m_currentTranslationMag = 0.0; // 當前的平移幅度
+    public boolean collisionDetected;
+
+    /**
+     * @param SlewRateLimiter SlewRateLimiter類別是用來實現斜率濾波的功能，主要用於控制機器人運動時的速率或電壓，以實現平滑的變化
+     */
+    private SlewRateLimiter m_magLimiter = new SlewRateLimiter(DriveConstants.kMagnitudeSlewRate);// 設定平移幅度的斜率限制值
+    private SlewRateLimiter m_rotLimiter = new SlewRateLimiter(DriveConstants.kRotationalSlewRate);// 設定旋轉速率的斜率限制值
+    private double m_prevTime = WPIUtilJNI.now() * 1e-6;// 前一次更新的時間，用於計算時間差
+
+    private double xSpeedDelivered;
+    private double ySpeedDelivered;
+    private double rotDelivered;
+
+    double last_world_linear_accel_x;
+    double last_world_linear_accel_y;
+    final static double kCollisionThreshold_DeltaG = 2f;// 猜得要改
+    boolean isDriverControlling = false;
+    // 利用里程計來追蹤狀態(pose)
+    SwerveDriveOdometry m_odometry = new SwerveDriveOdometry(
+            DriveConstants.kDriveKinematics, // 驅動運動學
+            getGyroscopeRotation(),
+            getModulePositions());
+
+    // 建構式
+    public SwerveSubsystem() {
+        nxGyro.enableLogging(true);
+        Timer.delay(1.0);
+        ZeroYaw();
+        m_gyroPidController.enableContinuousInput(180, -180);
+        AutoBuilder.configureHolonomic(
+                this::getPose,
+                this::resetOdometry,
+                this::getRobotRelativeSpeeds,
+                this::driveRobotRelative,
+                new HolonomicPathFollowerConfig(
+                        new PIDConstants(5.0, 0.0, 0.0),
+                        new PIDConstants(5.0, 0.0, 0.0),
+
+                        4.5,
+                        0.4,
+                        new ReplanningConfig()),
+                () -> {
+                    var alliance = DriverStation.getAlliance();
+                    if (alliance.isPresent()) {
+                        return alliance.get() == DriverStation.Alliance.Red;
+                    }
+                    return false;
+                },
+                this);
+
+    }
+
+    public double getYaw() {
+        return nxGyro.getYaw();
+    }
+
+    public boolean isEnabled() {
+        return DriverStation.isEnabled();
+    }
+
+    public boolean operatorControl() {
+
+        while (isOperatorControl() && isEnabled()) {
+            double curr_world_linear_accel_x = nxGyro.getWorldLinearAccelX();
+            double currentJerkX = curr_world_linear_accel_x - last_world_linear_accel_x;
+            last_world_linear_accel_x = curr_world_linear_accel_x;
+            double curr_world_linear_accel_y = nxGyro.getWorldLinearAccelY();
+            double currentJerkY = curr_world_linear_accel_y - last_world_linear_accel_y;
+            last_world_linear_accel_y = curr_world_linear_accel_y;
+
+            if ((Math.abs(currentJerkX) > kCollisionThreshold_DeltaG) ||
+                    (Math.abs(currentJerkY) > kCollisionThreshold_DeltaG)) {
+                collisionDetected = true;
+                System.out.println("Don't trust the odometer!!!!!");
+            }
+            SmartDashboard.putNumber("currentjerkx", currentJerkX);
+            SmartDashboard.putNumber("currentjerky", currentJerkY);
+            SmartDashboard.putNumber("LimitConst", kCollisionThreshold_DeltaG);
+            SmartDashboard.putBoolean("CollisionDetected", collisionDetected);
+            try {
+                drive(-MathUtil.applyDeadband(RobotContainer.m_driverController.getLeftY()
+                        * Constants.drive.kForwardspeed,
+                        OIConstants.kDriveDeadband),
+                        -MathUtil.applyDeadband(RobotContainer.m_driverController.getLeftX()
+                                * Constants.drive.klateralspeed,
+                                OIConstants.kDriveDeadband),
+                        -MathUtil.applyDeadband(RobotContainer.m_driverController.getRightX()
+                                * Constants.drive.krotspeed,
+                                OIConstants.kDriveDeadband),
+                        true, true);
+            } catch (RuntimeException ex) {
+                String err_string = "Drive system error:  " + ex.getMessage();
+                DriverStation.reportError(err_string, true);
+            }
+            Timer.delay(0.005);
+            return collisionDetected;
+        }
+        return collisionDetected;
+    }
+
+    public void RotationToSpeaker(double setpoint) {
+        drive(0, 0, m_gyroPidController.calculate(getYaw(), setpoint), true, true);
+    }
+
+    public void update() {
+        m_odometry.update(
+                Rotation2d.fromDegrees(getYaw()),
+                new SwerveModulePosition[] {
+                        m_frontLeft.getPosition(),
+                        m_frontRight.getPosition(),
+                        m_rearLeft.getPosition(),
+                        m_rearRight.getPosition()
+                });
+    }
+
+    @Override
+    public void periodic() {
+        update();
+        operatorControl();
+        SmartDashboard.putNumber("getx", getPose().getX());
+        SmartDashboard.putNumber("gety", getPose().getY());
+        SmartDashboard.putNumber("gyroYaw", getYaw());
+        SmartDashboard.putNumber("gyroAngle", nxGyro.getAngle());
+    }
+
+    public ChassisSpeeds getRobotRelativeSpeeds() {
+        return m_robotRelativeChassisSpeeds;
+    }
+
+    public void driveRobotRelative(ChassisSpeeds chassisSpeeds) {
+        SwerveModuleState[] moduleState = DriveConstants.kDriveKinematics.toSwerveModuleStates(chassisSpeeds);
+        this.setModuleStates(moduleState);
+    }
+
+    /**
+     * 回傳機器現在的pose
+     *
+     * @return The pose.
+     */
+    public Pose2d getPose() {
+        return m_odometry.getPoseMeters();
+    }
+
+    /**
+     * 將里程計數據重置成特定位置和方向。
+     *
+     * @param pose 指定位置 || 方向
+     */
+    public void resetOdometry(Pose2d pose) {
+        m_odometry.resetPosition(
+                Rotation2d.fromDegrees(getYaw()),
+                new SwerveModulePosition[] {
+                        m_frontLeft.getPosition(),
+                        m_frontRight.getPosition(),
+                        m_rearLeft.getPosition(),
+                        m_rearRight.getPosition()
+                },
+                pose);
+    }
+
+    /**
+     * 用搖桿操控機器人
+     *
+     * @param xSpeed        前進速度
+     * @param ySpeed        左右速度
+     * @param rot           旋轉旋轉
+     * @param fieldRelative 機器之XY是否相對於場地
+     * @param rateLimit     是否啟用速率限制以實現更平滑的控制
+     */
+    public void drive(double xSpeed, double ySpeed, double rot, boolean fieldRelative, boolean rateLimit) {
+
+        double xSpeedCommanded;
+        double ySpeedCommanded;
+
+        if (rateLimit) {
+            /**
+             * 將XY轉換為極坐標以進行速率限制
+             * 極坐標半徑（r）：表示點到原點的距離，即該點的半徑。
+             * 極角（θ）：表示點到原點的連線與某一固定方向的夾角，通常以正向的x軸方向為參考。
+             * 因此，一個點在極座標系統中的表示為 (r, θ)
+             * imputTranslationDir 被計算為速度向量 (xSpeed, ySpeed) 與x軸正方向之間的夾角
+             * inputTranslationMag 被計算為速度向量的模，即極坐標半徑。這樣，就可以使用極座標系統的概念來描述速度向量的方向和大小
+             */
+            double inputTranslationDir = Math.atan2(ySpeed, xSpeed);
+            double inputTranslationMag = Math.sqrt(Math.pow(xSpeed, 2) + Math.pow(ySpeed, 2));
+
+            double directionSlewRate;// 表示方向的斜率限制，即控制方向變化速率的參數
+            if (m_currentTranslationMag != 0.0) {
+                // 角速度除以橫移幅度
+                directionSlewRate = Math.abs(DriveConstants.kDirectionSlewRate / m_currentTranslationMag);
+            } else {
+                directionSlewRate = 500.0; // 給定一個高數字（500.0），表示斜率限制實際上是瞬時的，即方向變化非常快速
+            }
+
+            double currentTime = WPIUtilJNI.now() * 1e-6;// 獲取當前時間，單位轉換為秒
+            double elapsedTime = currentTime - m_prevTime;// 計算經過的時間（過去的時間)
+            // AngleDifference這個方法可以找到兩個角度之間的最小差異，並考慮了跨越 0 度的情況
+            // 返回的值表示兩個角度之間的最小角度差異，並且不考慮方向（取絕對值）。
+            double angleDif = Swerveoptimization.AngleDifference(inputTranslationDir, m_currentTranslationDir);
+            if (angleDif < 0.45 * Math.PI) {
+                m_currentTranslationDir = Swerveoptimization.StepTowardsCircular(m_currentTranslationDir,
+                        inputTranslationDir, directionSlewRate * elapsedTime);
+                m_currentTranslationMag = m_magLimiter.calculate(inputTranslationMag);
+            } else if (angleDif > 0.85 * Math.PI) {
+                if (m_currentTranslationMag > 1e-4) { // 這種情況通常出現在比較兩個浮點數是否相等時，由於浮點數的精度限制，可能存在微小的誤差。
+                    // 為了處理這樣的情況，通常會使用一個足夠小的閾值，稱之為 epsilon（ε），
+                    // 來代表零的近似值。這樣，只有當浮點數之間的差異小於 epsilon 時，我們才會將它們視為相等
+                    m_currentTranslationMag = m_magLimiter.calculate(0.0);
+                } else {
+                    m_currentTranslationDir = Swerveoptimization.WrapAngle(m_currentTranslationDir + Math.PI);
+                    m_currentTranslationMag = m_magLimiter.calculate(inputTranslationMag);
+                }
+            } else {
+                m_currentTranslationDir = Swerveoptimization.StepTowardsCircular(m_currentTranslationDir,
+                        inputTranslationDir, directionSlewRate * elapsedTime);
+                m_currentTranslationMag = m_magLimiter.calculate(0.0);
+            }
+            m_prevTime = currentTime;
+
+            xSpeedCommanded = m_currentTranslationMag * Math.cos(m_currentTranslationDir);
+            ySpeedCommanded = m_currentTranslationMag * Math.sin(m_currentTranslationDir);
+            m_currentRotation = m_rotLimiter.calculate(rot);
+
+        } else {
+            xSpeedCommanded = xSpeed;
+            ySpeedCommanded = ySpeed;
+            m_currentRotation = rot;
+        }
+
+        // 將指令的速度轉換為馬達或驅動系統所期望的單位
+        xSpeedDelivered = xSpeedCommanded * DriveConstants.kMaxSpeedMetersPerSecond;
+        ySpeedDelivered = ySpeedCommanded * DriveConstants.kMaxSpeedMetersPerSecond;
+        rotDelivered = m_currentRotation * DriveConstants.kMaxAngularSpeed;
+        // 根據fieldOriented 0或1，獲取 SwerveModule的狀態
+        m_robotRelativeChassisSpeeds = new ChassisSpeeds(xSpeedDelivered, ySpeedDelivered, rotDelivered);
+        var swerveModuleStates = DriveConstants.kDriveKinematics.toSwerveModuleStates(
+                fieldRelative
+                        ? ChassisSpeeds.fromFieldRelativeSpeeds(xSpeedDelivered, ySpeedDelivered, rotDelivered,
+                                Rotation2d.fromDegrees(getYaw()))
+                        : m_robotRelativeChassisSpeeds);
+        // 設定Swerve運動學以確保不超過系統設定的最大速度
+        SwerveDriveKinematics.desaturateWheelSpeeds(
+                swerveModuleStates, DriveConstants.kMaxSpeedMetersPerSecond);
+        // 各輪子之理想狀態
+        m_frontLeft.setDesiredState(swerveModuleStates[0]);
+        m_frontRight.setDesiredState(swerveModuleStates[1]);
+        m_rearLeft.setDesiredState(swerveModuleStates[2]);
+        m_rearRight.setDesiredState(swerveModuleStates[3]);
+    }
+
+    public boolean isOperatorControl() {
+        return DriverStation.isTeleopEnabled();
+    }
+
+    /**
+     * 讓搖桿沒值時將輪子變成X以防滑
+     */
+    public void setX() {
+        m_frontLeft.setDesiredState(new SwerveModuleState(0, Rotation2d.fromDegrees(45)));
+        m_frontRight.setDesiredState(new SwerveModuleState(0, Rotation2d.fromDegrees(-45)));
+        m_rearLeft.setDesiredState(new SwerveModuleState(0, Rotation2d.fromDegrees(-45)));
+        m_rearRight.setDesiredState(new SwerveModuleState(0, Rotation2d.fromDegrees(45)));
+    }
+
+    /**
+     * 設置ServeModule state
+     *
+     * @param desiredStates SwerveModule states 之理想狀態
+     */
+    public void setModuleStates(SwerveModuleState[] desiredStates) {
+        SwerveDriveKinematics.desaturateWheelSpeeds(
+                desiredStates, DriveConstants.kMaxSpeedMetersPerSecond);
+        m_frontLeft.setDesiredState(desiredStates[0]);
+        m_frontRight.setDesiredState(desiredStates[1]);
+        m_rearLeft.setDesiredState(desiredStates[2]);
+        m_rearRight.setDesiredState(desiredStates[3]);
+    }
+
+    // 歸零Encoder
+    public void resetEncoders() {
+        m_frontLeft.resetEncoders();
+        m_rearLeft.resetEncoders();
+        m_frontRight.resetEncoders();
+        m_rearRight.resetEncoders();
+    }
+
+    public Rotation2d getGyroscopeRotation() {
+        return nxGyro.getRotation2d();
+
+        // 我們必須反轉 NavX 的角度以便旋轉機器人
+        // 逆時針方向使角度增加。
+        // 回傳 Rotation2d.fromDegrees(360.0 - navx.getYaw());
+    }
+
+    /**
+     * 取得模組本身報告的目前傳動系統位置。
+     * 
+     * @return 目前傳動系統狀態。
+     */
+    public SwerveModulePosition[] getModulePositions() {
+        return Arrays.stream(swerveModules).map(module -> module.getPosition()).toArray(SwerveModulePosition[]::new);
+    }
+
+    public SwerveModuleVelocity slidingDetected() {
+        double[] velocities = Arrays.stream(swerveModules)
+                .mapToDouble(SwerveModule::driveModuleVelocity)
+                .toArray();
+        if (velocities.length != 4) {
+            throw new IllegalArgumentException(
+                    "I think DriveEncoder is die we do not got four wheels velocity, we have :" + velocities.length);
+        }
+        return new SwerveModuleVelocity(velocities);
+
+    }
+
+    // 歸零陀螺儀
+    public void zeroHeading() {
+        nxGyro.reset();
+    }
+
+    public void ZeroYaw() {
+        nxGyro.enableBoardlevelYawReset(true);
+        nxGyro.zeroYaw();
+    }
+
+    /**
+     * 回傳機器Heading.
+     *
+     * @return 機器人角度以180到-180
+     */
+    public double getHeading() {
+        return Rotation2d.fromDegrees(getYaw()).getDegrees();
+    }
+
+    /**
+     * 回傳機器的旋轉速度.
+     *
+     * @return 回傳機器人的旋轉速度以度/秒為單位
+     */
+    public double getTurnRate() {
+        return nxGyro.getRawGyroZ() * (DriveConstants.kGyroReversed ? -1.0 : 1.0);
+    }
+
+    public void stop() {
+        drive(0, 0, 0, true, true);
+    }
+}
