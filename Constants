@@ -1,0 +1,172 @@
+package frc.robot;
+
+import com.revrobotics.CANSparkBase.IdleMode;
+
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
+import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
+import edu.wpi.first.math.trajectory.TrapezoidProfile;
+import edu.wpi.first.math.util.Units;
+
+public final class Constants {
+    public static Pose2d BlueSpeakerOrigin = new Pose2d(new Translation2d(0, 0), Rotation2d.fromDegrees(0));
+    public static Pose2d RedSpeakerOrigin = new Pose2d(new Translation2d(0, 0), Rotation2d.fromDegrees(180));
+    public static final class DriveConstants {
+        // 駕駛參數 - 注意這不是機器人的最大速度，而是允許的最大速度
+        public static final double kMaxSpeedMetersPerSecond = 6.8;
+        public static final double kMaxAngularSpeed = 2 * Math.PI; // 弧度每秒
+
+        public static final double kDirectionSlewRate = 1.2; // 弧度每秒
+        public static final double kMagnitudeSlewRate = 1.8; // 每秒的百分比（1 = 100％）
+        public static final double kRotationalSlewRate = 2.0; // 每秒的百分比（1 = 100％）
+
+        // 車架配置
+        public static final double kTrackWidth = Units.inchesToMeters(21.7);
+        // 機器人右輪和左輪之間的中心距離
+        public static final double kWheelBase = Units.inchesToMeters(21.7);
+        // 機器人前輪和後輪之間的中心距離
+        public static final SwerveDriveKinematics kDriveKinematics = new SwerveDriveKinematics(
+                new Translation2d(kWheelBase / 2, kTrackWidth / 2),
+                new Translation2d(kWheelBase / 2, -kTrackWidth / 2),
+                new Translation2d(-kWheelBase / 2, kTrackWidth / 2),
+                new Translation2d(-kWheelBase / 2, -kTrackWidth / 2));
+
+        // 模組相對於車架的角度偏移，以弧度表示
+        public static final double kFrontLeftChassisAngularOffset = -Math.PI / 2;//-90
+        public static final double kFrontRightChassisAngularOffset = 0;//0
+        public static final double kBackLeftChassisAngularOffset = Math.PI;//180
+        public static final double kBackRightChassisAngularOffset = Math.PI / 2;//90
+
+        // SPARK MAX CAN IDs
+        public static final int kFrontLeftDrivingCanId = 58;
+        public static final int kRearLeftDrivingCanId = 52;
+        public static final int kFrontRightDrivingCanId = 56;
+        public static final int kRearRightDrivingCanId = 54;
+
+        public static final int kFrontLeftTurningCanId = 57;
+        public static final int kRearLeftTurningCanId = 51;
+        public static final int kFrontRightTurningCanId = 55;
+        public static final int kRearRightTurningCanId = 53;
+
+        public static final boolean kGyroReversed = false;
+    }
+
+    public static final class ModuleConstants {
+        // MAXSwerve 模組可以配置為三種齒輪之一：12T、13T 或 14T。
+        // 這會改變模組的驅動速度（齒輪齒數越多，機器人驅動速度越快）。
+        public static final int kDrivingMotorPinionTeeth = 16;
+
+        // 反轉轉向編碼器，因為 MAXSwerve 模組的輸出軸與轉向馬達相反方向旋轉。
+        public static final boolean kTurningEncoderInverted = true;
+
+        // 需要的驅動馬達轉換因子和前馈的計算
+        public static final double kDrivingMotorFreeSpeedRps = NeoMotorConstants.kFreeSpeedRpm / 60;
+        public static final double kWheelDiameterMeters = 0.0762;
+        public static final double kWheelCircumferenceMeters = kWheelDiameterMeters * Math.PI;
+        // 輪的渦輪齒輪上有 45 顆齒，第一階渦輪齒輪上有 22 顆齒，渦輪齒輪上有 15 顆齒
+        public static final double kDrivingMotorReduction = (45.0 * 22) / (kDrivingMotorPinionTeeth * 15);
+        public static final double kDriveWheelFreeSpeedRps = (kDrivingMotorFreeSpeedRps * kWheelCircumferenceMeters)
+                / kDrivingMotorReduction;
+
+        public static final double kDrivingEncoderPositionFactor = (kWheelDiameterMeters * Math.PI)
+                / kDrivingMotorReduction; // 米
+        public static final double kDrivingEncoderVelocityFactor = ((kWheelDiameterMeters * Math.PI)
+                / kDrivingMotorReduction) / 60.0; // 米每秒
+
+        public static final double kTurningEncoderPositionFactor = (2 * Math.PI); // 弧度
+        public static final double kTurningEncoderVelocityFactor = (2 * Math.PI) / 60.0; // 弧度每秒
+
+        public static final double kTurningEncoderPositionPIDMinInput = 0; // 弧度
+        public static final double kTurningEncoderPositionPIDMaxInput = kTurningEncoderPositionFactor; // 弧度
+
+        public static final double kDrivingP = 0.06;
+        public static final double kDrivingI = 0;
+        public static final double kDrivingD = 0;
+        public static final double kDrivingFF = 1 / kDriveWheelFreeSpeedRps;
+        public static final double kDrivingMinOutput = -1;
+        public static final double kDrivingMaxOutput = 1;
+
+        public static final double kTurningP = 1;//1
+        public static final double kTurningI = 0;
+        public static final double kTurningD = 0;
+        public static final double kTurningFF = 0;
+        public static final double kTurningMinOutput = -1;
+        public static final double kTurningMaxOutput = 1;
+
+        public static final IdleMode kDrivingMotorIdleMode = IdleMode.kCoast;
+        public static final IdleMode kTurningMotorIdleMode = IdleMode.kCoast;
+
+        public static final int kDrivingMotorCurrentLimit = 50; // 安培
+        public static final int kTurningMotorCurrentLimit = 20; // 安培
+    }
+
+    public static final class OIConstants {
+        public static final int kDriverControllerPort = 0;
+        public static final double kDriveDeadband = 0.05;
+    }
+
+    public static final class AutoConstants {
+        public static final double kMaxSpeedMetersPerSecond = 3;
+        public static final double kMaxAccelerationMetersPerSecondSquared = 3;
+        public static final double kMaxAngularSpeedRadiansPerSecond = Math.PI;
+        public static final double kMaxAngularSpeedRadiansPerSecondSquared = Math.PI;
+
+        public static final double kPXController = 1;
+        public static final double kPYController = 1;
+        public static final double kPThetaController = 1;
+
+        // 用於運動曲線機器人角度控制器的約束
+        public static final TrapezoidProfile.Constraints kThetaControllerConstraints = new TrapezoidProfile.Constraints(
+                kMaxAngularSpeedRadiansPerSecond, kMaxAngularSpeedRadiansPerSecondSquared);
+    }
+
+    public static final class NeoMotorConstants {
+        public static final double kFreeSpeedRpm = 5676;
+    }
+
+    public static final class drive {
+        public static final double kForwardspeed = 0.8;
+        public static final double klateralspeed = 0.8;
+        public static final double krotspeed = 0.6;
+
+        public static final double kForwardSlowspeed = 0.3;
+        public static final double klateralSlowspeed = 0.3;
+        public static final double krotSlowspeed = 0.3;
+    }
+
+    public static final class shaft {
+        // public static final double kWheelDiameterMeters = 0.005;
+        public static final double kshaftEncoderpositionFactory = 1 / 360 / 20;
+        public static final double kshootershaftEncoderpositionFactory = 1 / 360 / 142.5;
+        // (kWheelDiameterMeters*Math.PI)
+        // (ModuleConstants.kDrivingMotorReduction);//米
+    }
+
+    public static final class shooter {
+        public static final int kshootFrontupmotorID = 61;
+        public static final int kshootFrontDownmotorID = 62;
+        public static final int kshootAxis = 35;
+    }
+
+    public static final class Inverted {
+        public static final boolean T = true;
+        public static final boolean F = false;
+    }
+
+    public static final class shootershaftClass {
+        public static final int kshootershaftID = 30;
+        public static final int kshootershaft2ID = 33;
+    }
+
+    public static final class KFieldShoot {
+        public static final double DefaultAngle = 35;
+        public static final double h1 = 72.6;
+    }
+    public static final class mathConat {
+        public static double maxHigh = 1.81;
+        public static double gravity = 9.81;
+        public static double Const = 100;
+    }
+
+}
