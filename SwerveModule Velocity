@@ -1,0 +1,32 @@
+package frc.robot.subsystems;
+
+import java.util.Arrays;
+
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+public class SwerveModuleVelocity extends SubsystemBase {
+
+    private double[] DriveModuleVelocity;
+    private double maxVelocityDelta;// RPM
+
+    public SwerveModuleVelocity(double[] DriveModuleVelocity) {
+        this.DriveModuleVelocity = DriveModuleVelocity;
+    }
+
+    public boolean isrelativemotion() {
+        if (isrelativemotion()) {
+            System.out.println("Don't trust the odometer!!!!!");
+        }
+        double referencewheels = DriveModuleVelocity[0];
+        SmartDashboard.putBoolean("isrelativemotion", isrelativemotion());
+        return Arrays.stream(DriveModuleVelocity)
+                .anyMatch(value -> Math.abs(value - referencewheels) > maxVelocityDelta);
+    }
+
+    @Override
+    public void periodic() {
+        isrelativemotion();
+        SmartDashboard.putBoolean("isrelativemotion", isrelativemotion());
+    }
+}
