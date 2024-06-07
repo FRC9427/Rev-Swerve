@@ -1,0 +1,154 @@
+package frc.robot.subsystems;
+
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.SwerveModulePosition;
+import edu.wpi.first.math.kinematics.SwerveModuleState;
+
+import com.revrobotics.CANSparkMax;
+import com.revrobotics.CANSparkLowLevel.MotorType;
+import com.revrobotics.CANSparkLowLevel.PeriodicFrame;
+import com.revrobotics.SparkAbsoluteEncoder.Type;
+import com.revrobotics.SparkPIDController;
+
+import com.revrobotics.AbsoluteEncoder;
+import com.revrobotics.RelativeEncoder;
+
+import frc.robot.Constants.ModuleConstants;
+
+public class SwerveModule {
+
+    private final CANSparkMax m_drivingSparkMax;// 初始化CansparkMax
+    private final CANSparkMax m_turningSparkMax;
+
+    private final RelativeEncoder m_drivingEncoder;// 初始化Encoder
+    private final AbsoluteEncoder m_turningEncoder;// 絕對編碼器
+
+    private final SparkPIDController m_drivingPIDController;// PID控制器
+    private final SparkPIDController m_turningPIDController;
+    private double m_chassisAngularOffset = 0;// 底盤角度偏移初始為0
+    private SwerveModuleState m_desiredState = new SwerveModuleState(0.0, new Rotation2d());// swerve模組之理想狀態
+
+    public SwerveModule(int drivingCANId, int turningCANId, double chassisAngularOffset) {
+        m_drivingSparkMax = new CANSparkMax(drivingCANId, MotorType.kBrushless);// 定義sparkmax
+        m_turningSparkMax = new CANSparkMax(turningCANId, MotorType.kBrushless);
+
+        // 將兩個sparkmax回復出廠設定
+        m_drivingSparkMax.restoreFactoryDefaults();
+        m_turningSparkMax.restoreFactoryDefaults();
+        m_drivingSparkMax.setCANTimeout(250);
+        m_drivingSparkMax.setCANTimeout(250);
+        m_drivingEncoder = m_drivingSparkMax.getEncoder();// 將drivesparkmax的編碼值丟給左邊變數
+        m_turningEncoder = m_turningSparkMax.getAbsoluteEncoder(Type.kDutyCycle);// 將turningsparkmax的絕對編碼值丟給左邊變數
+        m_drivingPIDController = m_drivingSparkMax.getPIDController();// 初始化PID
+        m_turningPIDController = m_turningSparkMax.getPIDController();
+        m_drivingPIDController.setFeedbackDevice(m_drivingEncoder);// 告訴PID說值要從這裡拿
+        m_turningPIDController.setFeedbackDevice(m_turningEncoder);
+        m_drivingEncoder.setPositionConversionFactor(ModuleConstants.kDrivingEncoderPositionFactor);// 設定位置轉換因子
+        m_drivingEncoder.setVelocityConversionFactor(ModuleConstants.kDrivingEncoderVelocityFactor);// 設定速度轉換因子
+
+        m_turningEncoder.setPositionConversionFactor(ModuleConstants.kTurningEncoderPositionFactor);// 設定位置轉換因子
+        m_turningEncoder.setVelocityConversionFactor(ModuleConstants.kTurningEncoderVelocityFactor);// 設定速度轉換因子
+
+        // 正反轉極轉換 防接線接錯
+        m_turningEncoder.setInverted(ModuleConstants.kTurningEncoderInverted);
+        /**
+         * 為轉動馬達使用 PID控制器 。這將允許 PID
+         * / 控制器通過 0 到達設定點。
+         */
+        m_turningPIDController.setPositionPIDWrappingEnabled(true);
+        m_turningPIDController.setPositionPIDWrappingMinInput(ModuleConstants.kTurningEncoderPositionPIDMinInput);
+        m_turningPIDController.setPositionPIDWrappingMaxInput(ModuleConstants.kTurningEncoderPositionPIDMaxInput);
+
+        // 設置PID常數
+        m_drivingPIDController.setP(ModuleConstants.kDrivingP);
+        m_drivingPIDController.setI(ModuleConstants.kDrivingI);
+        m_drivingPIDController.setD(ModuleConstants.kDrivingD);
+        m_drivingPIDController.setFF(ModuleConstants.kDrivingFF);// PID跳脫閉迴的最終值
+        m_drivingPIDController.setOutputRange(ModuleConstants.kDrivingMinOutput,
+                ModuleConstants.kDrivingMaxOutput);// 設置PID的範圍這樣就能不用像我之前那樣寫mathtool
+
+        // 設置轉向PID常數
+        m_turningPIDController.setP(ModuleConstants.kTurningP);
+        m_turningPIDController.setI(ModuleConstants.kTurningI);
+        m_turningPIDController.setD(ModuleConstants.kTurningD);
+        m_turningPIDController.setFF(ModuleConstants.kTurningFF);// PID跳脫閉迴的最終值
+        m_turningPIDController.setOutputRange(ModuleConstants.kTurningMinOutput,
+                ModuleConstants.kTurningMaxOutput);
+        // 馬達之中性狀態
+        m_drivingSparkMax.setIdleMode(ModuleConstants.kDrivingMotorIdleMode);
+        m_turningSparkMax.setIdleMode(ModuleConstants.kTurningMotorIdleMode);
+        m_drivingSparkMax.setSmartCurrentLimit(ModuleConstants.kDrivingMotorCurrentLimit);// 電流限制
+        m_turningSparkMax.setSmartCurrentLimit(ModuleConstants.kTurningMotorCurrentLimit);
+
+        m_drivingEncoder.setMeasurementPeriod(10);
+        m_drivingEncoder.setAverageDepth(2);
+
+        m_drivingSparkMax.setPeriodicFramePeriod(PeriodicFrame.kStatus2,10);
+        m_turningSparkMax.setPeriodicFramePeriod(PeriodicFrame.kStatus2,10);
+        m_drivingSparkMax.setCANTimeout(0);
+        m_turningSparkMax.setCANTimeout(0);
+        // 將數值燒進sparkmax
+        m_drivingSparkMax.burnFlash();
+        m_turningSparkMax.burnFlash();
+
+        m_chassisAngularOffset = chassisAngularOffset;
+        m_desiredState.angle = new Rotation2d(m_turningEncoder.getPosition());// 理想角度換算
+        m_drivingEncoder.setPosition(0);// 歸零
+    }
+
+    /**
+     * Returns the current state of the module.
+     *
+     * @return The current state of the module.
+     */
+    public SwerveModuleState getState() {
+
+        return new SwerveModuleState(m_drivingEncoder.getVelocity(),
+                new Rotation2d(m_turningEncoder.getPosition() - m_chassisAngularOffset));
+    }
+
+    /**
+     * Returns the current position of the module.
+     *
+     * @return The current position of the module.
+     */
+    public SwerveModulePosition getPosition() {
+
+        return new SwerveModulePosition(
+                m_drivingEncoder.getPosition(),
+                new Rotation2d(m_turningEncoder.getPosition() - m_chassisAngularOffset));
+    }
+
+    /**
+     * Sets the desired state for the module.
+     *
+     * @param desiredState Desired state with speed and angle.
+     */
+    public void setDesiredState(SwerveModuleState desiredState) {
+        // 將底盤角度偏移套用到所需狀態。
+        SwerveModuleState correctedDesiredState = new SwerveModuleState();
+        correctedDesiredState.speedMetersPerSecond = desiredState.speedMetersPerSecond;
+        correctedDesiredState.angle = desiredState.angle.plus(Rotation2d.fromRadians(m_chassisAngularOffset));
+
+        // 最佳化狀態旋轉輪永遠不會超過 90 度。
+        SwerveModuleState optimizedDesiredState = SwerveModuleState.optimize(correctedDesiredState,
+                new Rotation2d(m_turningEncoder.getPosition()));
+
+        // 命令駕駛並將 SPARKS MAX 指向各自的設定點。
+        m_drivingPIDController.setReference(optimizedDesiredState.speedMetersPerSecond,
+                CANSparkMax.ControlType.kVelocity);
+        m_turningPIDController.setReference(optimizedDesiredState.angle.getRadians(),
+                CANSparkMax.ControlType.kPosition);
+
+        m_desiredState = desiredState;
+    }
+
+    public void resetEncoders() {
+        m_drivingEncoder.setPosition(0);// 歸零
+    }
+
+    public double driveModuleVelocity() {
+        return m_drivingEncoder.getVelocity();
+    }
+
+}
