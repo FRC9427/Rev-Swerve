@@ -1,0 +1,93 @@
+package frc.robot.subsystems;
+
+public class Swerveoptimization {
+
+    /**
+     * 將值以指定步進大小向目標值調整。
+     * @param _current 當前值，可以是正數或負數。
+     * @param _target 算法將向其調整的目標值，可以是正數或負數。
+     * @param _stepsize 可以採取的最大步進大小。
+     * @return 執行指定步進向指定目標進行調整後的 {@code _current} 的新值。
+     */
+    public static double StepTowards(double _current, double _target, double _stepsize) {
+        if (Math.abs(_current - _target) <= _stepsize) {
+            return _target;
+        }
+        else if (_target < _current) {
+            return _current - _stepsize;
+        }
+        else {
+            return _current + _stepsize;
+        }
+    }
+
+    /**
+     * 將值（角度）以最短路徑的指定步進大小向目標值（角度）調整。
+     * @param _current 當前角度（弧度）。可以位於 0 到 2*PI 範圍之外。
+     * @param _target 目標角度（弧度），算法將向其調整。可以位於 0 到 2*PI 範圍之外。
+     * @param _stepsize 可以採取的最大步進大小（弧度）。
+     * @return 執行指定步進向指定目標進行調整後的 {@code _current} 的新角度（弧度）。
+     * 這個值始終位於 0 到 2*PI（不包括）的範圍內。
+     */
+    public static double StepTowardsCircular(double _current, double _target, double _stepsize) {
+        _current = WrapAngle(_current);
+        _target = WrapAngle(_target);
+
+        double stepDirection = Math.signum(_target - _current);
+        double difference = Math.abs(_current - _target);
+        
+        if (difference <= _stepsize) {
+            return _target;
+        }
+        else if (difference > Math.PI) {
+            if (_current + 2*Math.PI - _target < _stepsize || _target + 2*Math.PI - _current < _stepsize) {
+                return _target;
+            }
+            else {
+                return WrapAngle(_current - stepDirection * _stepsize);
+            }
+        }
+        else {
+            return _current + stepDirection * _stepsize;
+        }
+    }
+
+    /**
+     * 計算兩個角度之間的（無符號）最小差異，包括跨越 0 度的計算。
+     * @param _angleA 一個角度（弧度）。
+     * @param _angleB 一個角度（弧度）。
+     * @return 兩個角度之間的（無符號）最小差異（弧度）。
+     */
+    public static double AngleDifference(double _angleA, double _angleB) {
+        double difference = Math.abs(_angleA - _angleB);
+        return difference > Math.PI? (2 * Math.PI) - difference : difference;
+    }
+
+    /**
+     * 包裝一個角度，直到它位於 0 到 2*PI（不包括）的範圍內。
+     * @param _angle 要包裝的角度（弧度）。可以是正數或負數，並且可以位於輸出範圍之外的多個包裝。
+     * @return 位於 0 和 2*PI（不包括）之間的角度（弧度）。
+     */
+    public static double WrapAngle(double _angle) {
+        double twoPi = 2*Math.PI;
+
+        if (_angle == twoPi) {
+            return 0.0;
+        }
+        else if (_angle > twoPi) {
+            return _angle - twoPi*Math.floor(_angle / twoPi);
+        }
+        else if (_angle < 0.0) {
+            return _angle + twoPi*(Math.floor((-_angle) / twoPi)+1);
+        }
+        else {
+            return _angle;
+        }
+    /**
+     *  如果 _angle 等於 2*PI，返回 0。
+     *  如果 _angle 大於 2PI，返回 _angle 減去 2PI 乘以向下取整(_angle / 2*PI)。
+     *  如果 _angle 小於 0，返回 _angle 加上 2PI 乘以（向下取整((-_angle) / 2PI) + 1）。
+     *  否則，返回 _angle。
+     */
+    }
+}
